@@ -55,12 +55,13 @@ def map_cellgroup_to_category(filename):
 
     cellgroup_counts = dict()
     handle = gzip.open(filename,'r')
+    header = handle.next()
     for line in handle:
         loc = line.strip().split()
         try:
-            cellgroup_counts[''.join(map(str,loc[3:]))] += 1
+            cellgroup_counts[tuple(loc[3:])] += 1
         except KeyError:
-            cellgroup_counts[''.join(map(str,loc[3:]))] = 1
+            cellgroup_counts[tuple(loc[3:])] = 1
     handle.close()
     
     #keys = cellgroup_counts.keys()
@@ -70,8 +71,9 @@ def map_cellgroup_to_category(filename):
 
     keys = cellgroup_counts.keys()
     cellgroup_mapping = dict([(key,k) for k,key in enumerate(keys)])
+    cellgroup_map_array = np.array([map(int,list(key)) for key in keys])
 
-    return cellgroup_mapping
+    return cellgroup_mapping, cellgroup_map_array
 
 class DataGenerator():
 
@@ -142,7 +144,7 @@ class Genome():
                       for loc in locations]).astype('float32')
 
         if self.prediction_type=='cellgroup':
-            Y = to_categorical(np.array([self.cellgroup_mapping[''.join(map(str,loc[3:]))] 
+            Y = to_categorical(np.array([self.cellgroup_mapping[tuple(map(str,loc[3:]))] 
                                          for loc in locations]), self.C)
 
         elif self.prediction_type=='celltype':

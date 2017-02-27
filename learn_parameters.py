@@ -93,27 +93,26 @@ def parse_args():
 
     return options
 
-def compute_test_accuracy(X_test, Y_test, model, prediction_type):
+def compute_test_accuracy(X_test, Y_test, model, prediction_type, cellgroup_map_array):
 
     prediction = model.predict(X_test)
     auc = []
 
     if prediction_type=="cellgroup":
 
-        raise NotImplementedError
+        prediction = np.dot(prediction, cellgroup_map_array)
+        Y_test = np.dot(Y_test, cellgroup_map_array)
 
-    elif prediction_type=="celltype":
+    mask = ~np.logical_or(Y_test.sum(1)==0, Y_test.sum(1)==Y_test.shape[1])
 
-        mask = ~np.logical_or(Y_test.sum(1)==0, Y_test.sum(1)==Y_test.shape[1])
-
-        for y,pred in zip(Y_test.T,prediction.T):
-            pos = np.logical_and(mask, y==1)
-            neg = np.logical_and(mask, y==0)
-            try:
-                U = stats.mannwhitneyu(pred[pos], pred[neg])[0]
-                auc.append(1.-U/(np.count_nonzero(pos)*np.count_nonzero(neg)))
-            except ValueError:
-                auc.append(0.5)
+    for y,pred in zip(Y_test.T,prediction.T):
+        pos = np.logical_and(mask, y==1)
+        neg = np.logical_and(mask, y==0)
+        try:
+            U = stats.mannwhitneyu(pred[pos], pred[neg])[0]
+            auc.append(1.-U/(np.count_nonzero(pos)*np.count_nonzero(neg)))
+        except ValueError:
+            auc.append(0.5)
 
     return auc
 
@@ -132,9 +131,10 @@ if __name__=="__main__":
 
     if options.prediction_type=="cellgroup":
         print "identifying cell groups from observed open chromatin activity ..."
-        cellgroup_mappings = load.map_cellgroup_to_category(options.peak_file)
+        cellgroup_mappings, cellgroup_map_array = load.map_cellgroup_to_category(options.peak_file)
     else:
         cellgroup_mappings = None
+        cellgroup_map_array = None
 
     # load reference genome track
     genome_track = load.Genome(options.genome, options.prediction_type, cellgroup_mappings)
@@ -170,7 +170,7 @@ if __name__=="__main__":
 
     # callbacks
     early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=50)
-    auroc = callbacks.AuROC(options.prediction_type)
+    auroc = callbacks.AuROC(options.prediction_type, cellgroup_map_array)
 
     # train model
     print "training the OrbWeaver model ..."
@@ -187,7 +187,7 @@ if __name__=="__main__":
     test_flow = test_data_generator.flow(batch_size=len(test))
     X_test, Y_test = test_flow.next()
 
-    test_auc = compute_test_accuracy(X_test, Y_test, network, options.prediction_type)
+    test_auc = compute_test_accuracy(X_test, Y_test, network, options.prediction_type, cellgroup_map_array)
     print test_auc
 
     genome_track.close()
