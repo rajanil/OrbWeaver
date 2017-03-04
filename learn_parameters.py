@@ -206,6 +206,8 @@ if __name__=="__main__":
     his = history.history
     handle = open("%s.tfs.pkl"%options.model_prefix,'w')
     cPickle.Pickler(handle,protocol=2).dump(tfs)
+    cPickle.Pickler(handle,protocol=2).dump(history)
+    cPickle.Pickler(handle,protocol=2).dump(test_auc)
     handle.close()
 
     print "done."
