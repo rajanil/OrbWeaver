@@ -1,18 +1,22 @@
 import numpy as np
 import scipy.stats as stats
+import time
 import pdb
 
 from keras.callbacks import Callback, EarlyStopping
 
 class AuROC(Callback):
 
-    def __init__(self, predtype, map_array=None):
+    def __init__(self, predtype, map_array, logger):
 
         self.prediction_type = predtype
         self.map_array = map_array
+        self.logger = logger
+        self.current_time = time.time()
 
     def on_train_begin(self, logs={}):
         self.values = []
+        self.current_time = time.time()
 
     def on_epoch_end(self, epoch, logs={}):
 
@@ -37,4 +41,6 @@ class AuROC(Callback):
                 values.append(0.5)
 
         self.values.append(values)
-        print "auroc:", self.values[-1]
+        epoch_time = time.time()-self.current_time
+        self.logger.log_this("epoch_%d_auroc: %s (%ds)"%(epoch, ' '.join(['%.4f'%v for v in self.values[-1]]), int(epoch_time)))
+        self.current_time = time.time()

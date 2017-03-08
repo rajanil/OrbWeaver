@@ -49,6 +49,11 @@ def parse_args():
                         help="prefix of file name to store the architecture and "
                         "parameters of the neural network")
 
+    parser.add_argument("--log_file",
+                        type=str,
+                        default=None,
+                        help="file name to log output of the software")
+
     parser.add_argument("--pwms",
                         type=str,
                         default="pwms",
@@ -63,7 +68,7 @@ def parse_args():
 
     parser.add_argument("--prediction_type",
                         type=str,
-                        default="cellgroup",
+                        default="celltype",
                         help="specify whether the predicted output should be chromatin activity "
                         "in a specific cell type or a group of cell types. groups are restricted "
                         "to subsets of cells in which the chromatin is open in all cells in the "
@@ -89,7 +94,10 @@ def parse_args():
     options.tag = options.peak_file[:-7]
 
     if options.model_prefix is None:
-        options.model_prefix = options.tag+".model"
+        options.model_prefix = options.tag+".%s.model"%options.prediction_type
+
+    if options.log_file is None:
+        options.log_file = options.tag+".%s.log"%options.prediction_type
 
     return options
 
@@ -116,21 +124,39 @@ def compute_test_accuracy(X_test, Y_test, model, prediction_type, cellgroup_map_
 
     return auc
 
+class Logger():
+
+    def __init__(self, log_file):
+
+        self.log_file = log_file
+        self.handle = open(self.log_file, 'w')
+        self.handle.close()
+
+    def log_this(self, text):
+
+        self.handle = open(self.log_file, 'a')
+        self.handle.write(text+'\n')
+        print text
+        self.handle.close()
+
+
 if __name__=="__main__":
 
     options = parse_args()
 
+    logger = Logger(options.log_file)
+    logger.log_this("peak file: %s"%options.peak_file)
+    logger.log_this("test chromosome: %s"%options.test_chromosome)
+    logger.log_this("prediction type: %s"%options.prediction_type)
+
     training, validation, test, cellnames = load.partition_sites(options)
 
-    print "peak file: %s"%options.peak_file
-    print "test chromosome: %s"%options.test_chromosome
-    print "number of training sites: %d"%len(training)
-    print "number of testing sites: %d"%len(test)
-    print "number of validation sites: %d"%len(validation)
-    print "prediction type: %s"%options.prediction_type
+    logger.log_this("number of training sites: %d"%len(training))
+    logger.log_this("number of testing sites: %d"%len(test))
+    logger.log_this("number of validation sites: %d"%len(validation))
 
     if options.prediction_type=="cellgroup":
-        print "identifying cell groups from observed open chromatin activity ..."
+        logger.log_this("identifying cell groups from observed open chromatin activity ...")
         cellgroup_mappings, cellgroup_map_array = load.map_cellgroup_to_category(options.peak_file)
     else:
         cellgroup_mappings = None
@@ -140,19 +166,19 @@ if __name__=="__main__":
     genome_track = load.Genome(options.genome, options.prediction_type, cellgroup_mappings)
     
     # training data generator
-    print "setting up a generator for training data ..."
+    logger.log_this("setting up a generator for training data ...")
     train_data_generator = load.DataGenerator(training, genome_track)
     train_flow = train_data_generator.flow(batch_size=100)
 
     # validation data
-    print "loading up validation data ..."
+    logger.log_this("loading validation data ...")
     validation_data_generator = load.DataGenerator(validation, genome_track)
     valid_flow = validation_data_generator.flow(batch_size=len(validation))
     X_validation, Y_validation = valid_flow.next()
     N_outputs = Y_validation.shape[1]
 
     # construct model
-    print "building the OrbWeaver model ..."
+    logger.log_this("building the OrbWeaver model ...")
     if options.prediction_type=='celltype':
         output_activation = 'sigmoid'
         loss = 'binary_crossentropy'
@@ -163,36 +189,38 @@ if __name__=="__main__":
     network, tfs = model.build_neural_network(N_outputs, output_activation, options.pwms, options.window_size) 
 
     # set optimization parameters
-    print "compiling the OrbWeaver model ..."
+    logger.log_this("compiling the OrbWeaver model ...")
     network.compile(optimizer=Adadelta(), 
                     loss=loss,
                     metrics=['accuracy'])
 
     # callbacks
     early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=50)
-    auroc = callbacks.AuROC(options.prediction_type, cellgroup_map_array)
+    auroc = callbacks.AuROC(options.prediction_type, cellgroup_map_array, logger)
 
     # train model
-    print "training the OrbWeaver model ..."
+    logger.log_this("training the OrbWeaver model ...")
+    logger.log_this("cell types: %s"%(' '.join(cellnames)))
     history = network.fit_generator(train_flow, \
                                     samples_per_epoch=10000, \
                                     nb_epoch=options.num_epochs, \
-                                    verbose=2, \
+                                    verbose=0, \
                                     validation_data=(X_validation, Y_validation), \
                                     callbacks=[auroc, early_stopping])
 
     # evaluate test accuracy
-    print "evaluating model on test data ..."
+    logger.log_this("loading test data ...")
     test_data_generator = load.DataGenerator(test, genome_track)
     test_flow = test_data_generator.flow(batch_size=len(test))
     X_test, Y_test = test_flow.next()
 
+    logger.log_this("evaluating model on test data ...")
     test_auc = compute_test_accuracy(X_test, Y_test, network, options.prediction_type, cellgroup_map_array)
-    print test_auc
+    logger.log_this("test auroc: %s"%(' '.join(['%.4f'%v for v in test_auc])))
 
     genome_track.close()
 
-    print "saving the model architecture and parameters ..."
+    logger.log_this("saving the model architecture and parameters ...")
     # save model architecture
     network_arch = network.to_json()
     handle = open("%s.json"%options.model_prefix,'w')
@@ -210,4 +238,4 @@ if __name__=="__main__":
     cPickle.Pickler(handle,protocol=2).dump(test_auc)
     handle.close()
 
-    print "done."
+    logger.log_this("done.")
